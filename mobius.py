@@ -28,7 +28,7 @@ class Mesh:
         self.me_vertices = []
         self.me_faces = []
 
-        self.me_vertex_idx = {}
+        self.edge_to_me_vertex = {}
 
         # Initialize bigger list, prune excess later.
         self.me_neighbors = [[] for _ in range(3*len(self.faces))]
@@ -36,10 +36,10 @@ class Mesh:
         for face in self.faces:
             me_face = []
             for edge in self.get_face_edges(face):
-                if edge not in self.me_vertex_idx:
-                    self.me_vertex_idx[edge] = len(self.me_vertex_idx)
+                if edge not in self.edge_to_me_vertex:
+                    self.edge_to_me_vertex[edge] = len(self.edge_to_me_vertex)
                     self.me_vertices.append(self.get_mid_edge_point(edge))
-                me_face.append(self.me_vertex_idx[edge])
+                me_face.append(self.edge_to_me_vertex[edge])
 
             self.me_faces.append(me_face)
             for u in me_face:
@@ -47,9 +47,9 @@ class Mesh:
                     if u != v:
                         self.me_neighbors[u].append(v)
 
-        self.inv_me_vertex_idx = {}
-        for key, value in self.me_vertex_idx.items():
-            self.inv_me_vertex_idx[value] = key
+        self.me_vertex_to_edge = {}
+        for key, value in self.edge_to_me_vertex.items():
+            self.me_vertex_to_edge[value] = key
 
         self.me_neighbors = self.me_neighbors[:len(self.me_vertices)]
 
@@ -68,7 +68,7 @@ class Mesh:
 
         self.embedding = [None for _ in self.me_vertices]
         for r in range(len(self.me_vertices)):
-            i, j = self.inv_me_vertex_idx[r]
+            i, j = self.me_vertex_to_edge[r]
             x = (self.u[i] + self.u[j]) / 2
             y = self.ul[r]
             self.embedding[r] = (x, y)
@@ -85,7 +85,7 @@ class Mesh:
         plt.show()
 
     def is_cut_me_face(self, me_face):
-        return sorted(me_face) == sorted(self.me_vertex_idx[edge] for edge in self.get_face_edges(self.cut_face))
+        return sorted(me_face) == sorted(self.edge_to_me_vertex[edge] for edge in self.get_face_edges(self.cut_face))
 
     def calculate_u(self):
         """ Calculate u (harmonic function on vertices) by solving
@@ -199,8 +199,8 @@ class Mesh:
 
 
     def calculate_one_ul(self, vs, vr):
-        er = self.inv_me_vertex_idx[vr]
-        es = self.inv_me_vertex_idx[vs]
+        er = self.me_vertex_to_edge[vr]
+        es = self.me_vertex_to_edge[vs]
         vj = next(iter((set(er) & set(es))))
         vi = next(iter((set(er) - set(es))))
         vk = next(iter((set(es) - set(er))))
