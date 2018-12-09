@@ -1,22 +1,35 @@
 
 let scenewrapper;
 
+const base_folder = './datasets/non-rigid-world/'
+
 function start() {
   scenewrapper = new SceneWrapper();
+  load_object(base_folder + 'cat0.obj', new THREE.Vector3(-100, 0, 0));
+  load_object(base_folder + 'cat1.obj', new THREE.Vector3(100, 0, 0));
+  display_sample('corresp-' + 'cat0', new THREE.Vector3(-100, 0, 0));
+  display_sample('corresp-' + 'cat1', new THREE.Vector3(100, 0, 0));
+}
+
+function load_object(obj_file, pos) {
   const loader = new THREE.OBJLoader();
-  loader.load('./datasets/non-rigid-world/cat0.obj', (obj) => { 
-  // loader.load('./datasets/simple/reg_tetra.obj', (obj) => { 
+  loader.load(obj_file, (obj) => { 
+    if(pos != null)
+      obj.position.set(pos.x, pos.y, pos.z);
     scenewrapper.scene.add(obj); 
   });
 }
 
-function display_sample() {
+function display_sample(sample_name, pos) {
   const loader = new THREE.FileLoader();
-  loader.load('./sample4.vert', (data) => {
+  loader.load(sample_name, (data) => {
     const lines = data.split('\n');
     console.log(lines);
     for(let line of lines) {
       const nums = parse_nums(line);
+      nums[0] += pos.x;
+      nums[1] += pos.y;
+      nums[2] += pos.z;
       add_sphere(nums);
     }
   });
@@ -43,7 +56,11 @@ function add_sphere(nums) {
   scenewrapper.scene.add(sphere);
 }
 
+function random_hex_color() {
+  return "#000000".replace(/0/g,function(){return (~~(Math.random()*16)).toString(16);});
+}
+
 window.onload = function () {
   start();
-  display_sample();
+  // display_sample();
 }

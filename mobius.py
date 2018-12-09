@@ -5,6 +5,7 @@ from scipy.sparse import csc_matrix
 from scipy.sparse.linalg import spsolve, lsqr
 import heapq
 import sys
+import pyximport; pyximport.install()
 
 Point = namedtuple('Point', ['x', 'y', 'z'])
 
@@ -262,20 +263,20 @@ class Mesh:
             self.approx_single_source_geo_dists(source)
 
     def approx_single_source_geo_dists(self, source): 
-        visited = set()
+        visited = [False for _ in self.vertices]
         dists = self.dists[source]
         frontier = deque()
 
-        visited.add(source)
+        visited[source] = True
         dists[source] = 0
         frontier.appendleft(source)
 
         while frontier:
             node = frontier.pop()
             for neighbor in self.neighbors[node]:
-                if neighbor not in visited:
+                if not visited[neighbor]:
                     dists[neighbor] = dists[node] + 1
-                    visited.add(neighbor)
+                    visited[neighbor] = True
                     frontier.appendleft(neighbor)
 
     def single_source_geodesic_distances(self, source):
@@ -357,25 +358,27 @@ class Mesh:
         return np.array([self.point_project(point) for point in points])
 
     def point_project(self, point):
-        closest = min(self.neighbors[point], key=lambda q : self.get_edge_dist(point, q))
+        closest = min(self.neighbors[point], key=lambda q : self.get_edge_dist((point, q)))
         edge = tuple(sorted([point, closest]))
         me_point = self.edge_to_me_vertex[edge]
         x, y = self.embedding[me_point]
         return x + 1j*y
     
 
-def mobius_voting(M1, M2):
-    S1 = M1.project(M1.sample)
-    S2 = M2.project(M2.sample)
-    N = len(S1)
+def mobius_voting(M1, M2, num_it=None):
+    Z = M1.project(M1.sample)
+    W = M2.project(M2.sample)
+    N = len(Z)
 
-    votes = np.zeros(N, N)
+    if num_it is None:
+        num_it = N**3
+    votes = np.zeros((N, N))
     for _ in range(num_it):
-        Z = np.random.choice(S1, 3, replace=False)
-        W = np.random.choice(S2, 3, replace=False)
+        Z_triplet = np.random.choice(Z, 3, replace=False)
+        W_triplet = np.random.choice(W, 3, replace=False)
 
-        Z_mobius = get_mobius_transform(Z)
-        W_mobius = get_mobius_transform(W)
+        Z_mobius = get_mobius_transform(Z_triplet)
+        W_mobius = get_mobius_transform(W_triplet)
 
         Z_bar = Z_mobius(Z)
         W_bar = W_mobius(W)
@@ -383,12 +386,12 @@ def mobius_voting(M1, M2):
         mutual_pairs = get_mutually_closest_pairs(Z_bar, W_bar)
 
         EPS = 1e-5
-        THRESHOLD = 0.4 * len(S1) 
+        THRESHOLD = 3 # 0.4 * len(Z) 
 
         if len(mutual_pairs) <= THRESHOLD:
             continue
 
-        deformation_error = get_deformation_error(Z_bar, W_bar, correspondence)
+        deformation_error = get_deformation_error(Z_bar, W_bar, mutual_pairs)
         for z, w in mutual_pairs:
             votes[z, w] += 1 / (EPS + deformation_error)
 
@@ -396,7 +399,7 @@ def mobius_voting(M1, M2):
     return correspondence
 
 def get_mobius_transform(Z):
-    Y = [(np.cos(th), np.sin(th)) for th in [2*k*np.pi/3 for k in range(3)]]
+    Y = np.array([np.exp(2j*k*np.pi/3) for k in range(3)])
     Ty = get_mobius_matrix(Y)
     Tz = get_mobius_matrix(Z)
     T = np.linalg.inv(Ty) @ Tz
@@ -414,8 +417,10 @@ def get_mobius_matrix(Z):
 def get_mutually_closest_pairs(Z, W):
     N = len(Z)
     # TODO: check if precomputing dists increase performance.
-    Z_closest = [min(range(N), lambda i : abs(W[i] - z)) for z in Z]
-    W_closest = [min(range(N), lambda i : abs(Z[i] - w)) for w in W]
+    dists = np.array([[abs(z - w) for w in W] for z in Z])
+    
+    Z_closest = np.argmin(dists, axis=1)
+    W_closest = np.argmin(dists, axis=0)
 
     pairs = []
     for i, _ in enumerate(Z):
@@ -429,10 +434,11 @@ def get_deformation_error(Z, W, correspondence):
 
 def extract_correspondence(votes):
     correspondence = []
-    votes /= np.max(votes)
+    if np.max(votes) > 0:
+        votes /= np.max(votes)
     N = votes.shape[0]
     EPS = 1e-5
-    THRESHOLD = 0.25
+    THRESHOLD = 0
     for _ in range(N):
         row, col = np.unravel_index(np.argmax(votes), votes.shape)
         confidence = votes[row, col]
@@ -459,17 +465,29 @@ def read_mesh(filename):
                 faces.append(tuple(map(lambda x : int(x)-1, nums)))
     return Mesh(vertices, faces)
 
-
+def print_correspondence(meshes, correspondence):
+    print(*(confidence for confidence, *_ in correspondence), sep='\n', end='\n\n')
+    for i, mesh in enumerate(meshes):
+        for _, *v in correspondence:
+            print(*mesh.vertices[v[i]])
+        print('')
 
 def main():
-    mesh = read_mesh('./datasets/non-rigid-world/cat0.obj')
-    # mesh = read_mesh('./datasets/simple/tetra.obj')
-    # mesh = read_mesh('./datasets/simple/reg_tetra.obj')
-    mesh.calculate_planar_embedding()
-    mesh.display_embedding()
-    mesh.calculate_sample(20)
-    for v in mesh.sample:
-        print(*mesh.vertices[v])
+    file1 = 'cat0'
+    file2 = 'cat1'
+    meshes = []
+    for filename in (file1, file2):
+        if filename == file2: sys.exit(0)
+        mesh = read_mesh(f'./datasets/non-rigid-world/{filename}.obj')
+        mesh.calculate_planar_embedding()
+        # mesh.display_embedding()
+        mesh.calculate_sample(30)
+        meshes.append(mesh)
+        # for v in mesh.sample:
+        #     print(*mesh.vertices[v])
+        # print('')
+    correspondence = mobius_voting(*meshes)
+    print_correspondence(meshes, correspondence)
 
 if __name__ == '__main__':
     main()
