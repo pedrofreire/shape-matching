@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.sparse import csc_matrix
 from scipy.sparse.linalg import spsolve, lsqr
+import heapq
 import sys
 
 Point = namedtuple('Point', ['x', 'y', 'z'])
@@ -14,6 +15,7 @@ class Mesh:
         self.vertices = vertices.copy()
         self.faces = faces.copy()
 
+        self.neighbors = None
         self.u = None
         self.ul = None
         self.me_vertices = None
@@ -24,7 +26,20 @@ class Mesh:
         self.cut_face = None
         self.embedding = None
 
+        self._calculate_neighbors()
         self._calculate_edge_mesh()
+
+    def _calculate_neighbors(self):
+        self.neighbors = [[] for _ in self.vertices]
+        for face in self.faces:
+            for u, v in zip(face, face[1:] + face[:1]):
+                self.neighbors[u].append(v)
+                self.neighbors[v].append(u)
+
+        self.vertex_faces = [[] for _ in self.vertices]
+        for face_idx, face in enumerate(self.faces):
+            for v in face:
+                self.vertex_faces[v].append(face_idx)
 
     def _calculate_edge_mesh(self):
         self.me_vertices = []
@@ -73,7 +88,7 @@ class Mesh:
             y = self.ul[r]
             self.embedding[r] = (x, y)
 
-        self.display_embedding()
+        # self.display_embedding()
 
     def display_embedding(self):
         LENGTH_THRESHOLD = 30000
@@ -224,6 +239,211 @@ class Mesh:
         vr = Point(r.x - p.x, r.y - p.y, r.z - p.z)
         return np.arccos(np.dot(vq, vr) / (norm(vq) * norm(vr)))
 
+    def calculate_sample(self, N):
+        self.calculate_geodesic_distances()
+        self.sample = np.array(self.find_curvature_extrema())
+        if len(self.sample) > N:
+            self.sample = np.random.choice(self.sample, N, replace=False)
+        self.sampleset = set(self.sample)
+
+        while len(self.sample) < N:
+            farthest_point = self.get_farthest_point()
+            if not farthest_point:
+                break
+            self.sample.append(farthest_point)
+            self.sampleset.add(farthest_point)
+
+    def calculate_geodesic_distances(self):
+        n = len(self.vertices)
+        self.dists = [[float('inf') for _ in range(n)] for _ in range(n)]
+
+        for source in range(n):
+            # self.single_source_geodesic_distances(source)
+            self.approx_single_source_geo_dists(source)
+
+    def approx_single_source_geo_dists(self, source): 
+        visited = set()
+        dists = self.dists[source]
+        frontier = deque()
+
+        visited.add(source)
+        dists[source] = 0
+        frontier.appendleft(source)
+
+        while frontier:
+            node = frontier.pop()
+            for neighbor in self.neighbors[node]:
+                if neighbor not in visited:
+                    dists[neighbor] = dists[node] + 1
+                    visited.add(neighbor)
+                    frontier.appendleft(neighbor)
+
+    def single_source_geodesic_distances(self, source):
+        visited = set()
+        dists = self.dists[source]
+        frontier = []
+
+        visited.add(source)
+        dists[source] = 0
+        frontier.append((dists[source], source))
+
+        while frontier:
+            dist, node = heapq.heappop(frontier)
+            # Lazy removal of node.
+            if dist != dists[node]:
+                continue
+            visited.add(node)
+
+            for neighbor in self.neighbors[node]:
+                if neighbor not in visited:
+                    dist = self.get_edge_dist((node, neighbor))
+                    if dists[neighbor] > dists[node] + dist:
+                        dists[neighbor] = dists[node] + dist
+                        heapq.heappush(frontier, (dists[neighbor], neighbor))
+
+    def get_edge_dist(self, edge):
+        p, q = (self.vertices[v] for v in edge)
+        return np.sqrt(sum((px - qx)**2 for px, qx in zip(p, q)))
+
+    def find_curvature_extrema(self):
+        self.find_curvatures()
+        extrema = []
+        for vertex in range(len(self.vertices)):
+            diff = self.curvature[vertex] - max(self.curvature[neighbor] for neighbor in self.neighbors[vertex])
+            if diff > 0:
+                extrema.append(vertex)
+        return extrema
+
+    def find_curvatures(self):
+        self.curvature = [self.find_vertex_curvature(v) for v in range(len(self.vertices))]
+
+    def find_vertex_curvature(self, u):
+        area = 0
+        sum_angles = 0
+        for face_idx in self.vertex_faces[u]:
+            face = self.faces[face_idx]
+            v, w = set(face) - set([u])
+            sum_angles += self.get_angle(u, v, w)
+            area = self.face_area(face) / 3
+        return (2*np.pi - sum_angles) / area
+
+    def face_area(self, face):
+        p, q, r = [self.vertices[v] for v in face]
+        z1 = np.array([
+         q.x - p.x,
+         q.y - p.y,
+         q.z - p.z,
+        ])
+        z2 = np.array([
+         r.x - p.x,
+         r.y - p.y,
+         r.z - p.z,
+        ])
+        return np.linalg.norm(np.cross(z1, z2)) / 2
+
+    def get_farthest_point(self):
+        farthest_point = None
+        max_dist = -1
+        for point in range(len(self.vertices)):
+            if point in self.sampleset:
+                continue
+            dist = min(self.dists[point][q] for q in self.sample)
+            if dist > max_dist:
+                max_dist = dist
+                farthest_point = point
+        return farthest_point 
+
+    def project(self, points):
+        return np.array([self.point_project(point) for point in points])
+
+    def point_project(self, point):
+        closest = min(self.neighbors[point], key=lambda q : self.get_edge_dist(point, q))
+        edge = tuple(sorted([point, closest]))
+        me_point = self.edge_to_me_vertex[edge]
+        x, y = self.embedding[me_point]
+        return x + 1j*y
+    
+
+def mobius_voting(M1, M2):
+    S1 = M1.project(M1.sample)
+    S2 = M2.project(M2.sample)
+    N = len(S1)
+
+    votes = np.zeros(N, N)
+    for _ in range(num_it):
+        Z = np.random.choice(S1, 3, replace=False)
+        W = np.random.choice(S2, 3, replace=False)
+
+        Z_mobius = get_mobius_transform(Z)
+        W_mobius = get_mobius_transform(W)
+
+        Z_bar = Z_mobius(Z)
+        W_bar = W_mobius(W)
+
+        mutual_pairs = get_mutually_closest_pairs(Z_bar, W_bar)
+
+        EPS = 1e-5
+        THRESHOLD = 0.4 * len(S1) 
+
+        if len(mutual_pairs) <= THRESHOLD:
+            continue
+
+        deformation_error = get_deformation_error(Z_bar, W_bar, correspondence)
+        for z, w in mutual_pairs:
+            votes[z, w] += 1 / (EPS + deformation_error)
+
+    correspondence = extract_correspondence(votes)
+    return correspondence
+
+def get_mobius_transform(Z):
+    Y = [(np.cos(th), np.sin(th)) for th in [2*k*np.pi/3 for k in range(3)]]
+    Ty = get_mobius_matrix(Y)
+    Tz = get_mobius_matrix(Z)
+    T = np.linalg.inv(Ty) @ Tz
+    a, b, c, d = T.flatten()
+    return np.vectorize(lambda x : (a*x + b) / (c*x + d))
+
+def get_mobius_matrix(Z):
+    z1, z2, z3 = Z
+    return np.array([
+        [z2 - z3, z1*z3 - z1*z2],
+        [z2 - z1, z1*z3 - z3*z2],
+    ])
+
+
+def get_mutually_closest_pairs(Z, W):
+    N = len(Z)
+    # TODO: check if precomputing dists increase performance.
+    Z_closest = [min(range(N), lambda i : abs(W[i] - z)) for z in Z]
+    W_closest = [min(range(N), lambda i : abs(Z[i] - w)) for w in W]
+
+    pairs = []
+    for i, _ in enumerate(Z):
+        j = Z_closest[i]
+        if W_closest[j] == i:
+            pairs.append((i, j))
+    return pairs
+
+def get_deformation_error(Z, W, correspondence):
+    return sum(abs(Z[i] - W[j]) for i, j in correspondence) / len(correspondence)
+
+def extract_correspondence(votes):
+    correspondence = []
+    votes /= np.max(votes)
+    N = votes.shape[0]
+    EPS = 1e-5
+    THRESHOLD = 0.25
+    for _ in range(N):
+        row, col = np.unravel_index(np.argmax(votes), votes.shape)
+        confidence = votes[row, col]
+        if confidence < THRESHOLD:
+            break
+        correspondence.append((confidence, row, col))
+        votes[row, :] = np.zeros(N)
+        votes[:, col] = np.zeros(N)
+    return correspondence
+
+
 
 def read_mesh(filename):
     vertices = []
@@ -246,6 +466,10 @@ def main():
     # mesh = read_mesh('./datasets/simple/tetra.obj')
     # mesh = read_mesh('./datasets/simple/reg_tetra.obj')
     mesh.calculate_planar_embedding()
+    mesh.display_embedding()
+    mesh.calculate_sample(20)
+    for v in mesh.sample:
+        print(*mesh.vertices[v])
 
 if __name__ == '__main__':
     main()
