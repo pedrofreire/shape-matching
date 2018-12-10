@@ -5,7 +5,7 @@ from scipy.sparse import csc_matrix
 from scipy.sparse.linalg import spsolve, lsqr
 import heapq
 import sys
-import pyximport; pyximport.install()
+from cy_shortest import cy_short_paths
 
 Point = namedtuple('Point', ['x', 'y', 'z'])
 
@@ -241,43 +241,26 @@ class Mesh:
         return np.arccos(np.dot(vq, vr) / (norm(vq) * norm(vr)))
 
     def calculate_sample(self, N):
-        self.calculate_geodesic_distances()
-        self.sample = np.array(self.find_curvature_extrema())
+        self.sample = self.find_curvature_extrema()
+        print(len(self.sample))
         if len(self.sample) > N:
             self.sample = np.random.choice(self.sample, N, replace=False)
         self.sampleset = set(self.sample)
 
+        self.dists = cy_short_paths.all_pairs_shortest_paths(self)
+        # self.dists = self.calculate_geodesic_distances()
         while len(self.sample) < N:
             farthest_point = self.get_farthest_point()
-            if not farthest_point:
-                break
             self.sample.append(farthest_point)
             self.sampleset.add(farthest_point)
+        self.sample = np.array(self.sample)
 
     def calculate_geodesic_distances(self):
         n = len(self.vertices)
         self.dists = [[float('inf') for _ in range(n)] for _ in range(n)]
 
         for source in range(n):
-            # self.single_source_geodesic_distances(source)
-            self.approx_single_source_geo_dists(source)
-
-    def approx_single_source_geo_dists(self, source): 
-        visited = [False for _ in self.vertices]
-        dists = self.dists[source]
-        frontier = deque()
-
-        visited[source] = True
-        dists[source] = 0
-        frontier.appendleft(source)
-
-        while frontier:
-            node = frontier.pop()
-            for neighbor in self.neighbors[node]:
-                if not visited[neighbor]:
-                    dists[neighbor] = dists[node] + 1
-                    visited[neighbor] = True
-                    frontier.appendleft(neighbor)
+            self.single_source_geodesic_distances(source)
 
     def single_source_geodesic_distances(self, source):
         visited = set()
@@ -310,8 +293,7 @@ class Mesh:
         self.find_curvatures()
         extrema = []
         for vertex in range(len(self.vertices)):
-            diff = self.curvature[vertex] - max(self.curvature[neighbor] for neighbor in self.neighbors[vertex])
-            if diff > 0:
+            if self.curvature[vertex] > max(0, 2 * max(self.curvature[neighbor] for neighbor in self.neighbors[vertex])):
                 extrema.append(vertex)
         return extrema
 
@@ -325,7 +307,7 @@ class Mesh:
             face = self.faces[face_idx]
             v, w = set(face) - set([u])
             sum_angles += self.get_angle(u, v, w)
-            area = self.face_area(face) / 3
+            area += self.face_area(face) / 3
         return (2*np.pi - sum_angles) / area
 
     def face_area(self, face):
@@ -366,45 +348,47 @@ class Mesh:
     
 
 def mobius_voting(M1, M2, num_it=None):
-    Z = M1.project(M1.sample)
-    W = M2.project(M2.sample)
-    N = len(Z)
+    Z0 = M1.project(M1.sample)
+    W0 = M2.project(M2.sample)
+    N = len(Z0)
 
     if num_it is None:
-        num_it = N**3
+        num_it = 5*N**3
     votes = np.zeros((N, N))
     for _ in range(num_it):
-        Z_triplet = np.random.choice(Z, 3, replace=False)
-        W_triplet = np.random.choice(W, 3, replace=False)
+        Z_triplet = np.random.choice(Z0, 3, replace=False)
+        W_triplet = np.random.choice(W0, 3, replace=False)
 
         Z_mobius = get_mobius_transform(Z_triplet)
         W_mobius = get_mobius_transform(W_triplet)
 
-        Z_bar = Z_mobius(Z)
-        W_bar = W_mobius(W)
+        Z = apply_mobius(Z0, Z_mobius)
+        W = apply_mobius(W0, W_mobius)
 
-        mutual_pairs = get_mutually_closest_pairs(Z_bar, W_bar)
+        paired_z, paired_w = get_mutually_closest_pairs(Z, W)
 
         EPS = 1e-5
-        THRESHOLD = 3 # 0.4 * len(Z) 
+        THRESHOLD = 0.2 * len(Z) 
 
-        if len(mutual_pairs) <= THRESHOLD:
+        if len(paired_z) <= THRESHOLD:
             continue
 
-        deformation_error = get_deformation_error(Z_bar, W_bar, mutual_pairs)
-        for z, w in mutual_pairs:
-            votes[z, w] += 1 / (EPS + deformation_error)
+        deformation_error = get_deformation_error(Z, W, paired_z, paired_w)
+        votes[paired_z, paired_w] += 1 / (EPS + deformation_error) 
 
     correspondence = extract_correspondence(votes)
     return correspondence
 
 def get_mobius_transform(Z):
-    Y = np.array([np.exp(2j*k*np.pi/3) for k in range(3)])
-    Ty = get_mobius_matrix(Y)
+    # Hardcode matrix to speed computation.
+    # Y = np.array([np.exp(2j*k*np.pi/3) for k in range(3)])
+    # Ty = get_mobius_matrix(Y)
+    # yTy = np.inalginv(Ty)
+    iTy = np.array([[ 0.16666667-2.88675135e-01j, -0.33333333-1.11022302e-16j],
+                    [ 0.16666667+2.88675135e-01j, -0.33333333-1.12172823e-16j]])
     Tz = get_mobius_matrix(Z)
-    T = np.linalg.inv(Ty) @ Tz
-    a, b, c, d = T.flatten()
-    return np.vectorize(lambda x : (a*x + b) / (c*x + d))
+    a, b, c, d = (iTy @ Tz).flatten()
+    return a, b, c, d
 
 def get_mobius_matrix(Z):
     z1, z2, z3 = Z
@@ -413,24 +397,24 @@ def get_mobius_matrix(Z):
         [z2 - z1, z1*z3 - z3*z2],
     ])
 
+def apply_mobius(Z, Z_mobius):
+    a, b, c, d = Z_mobius
+    return (a*Z + b) / (c*Z + d)
 
 def get_mutually_closest_pairs(Z, W):
-    N = len(Z)
-    # TODO: check if precomputing dists increase performance.
-    dists = np.array([[abs(z - w) for w in W] for z in Z])
+    N = Z.shape[0]
+    diffs = Z - W.reshape(-1, 1)
+    dists_sqr = diffs.real**2 + diffs.imag**2
     
-    Z_closest = np.argmin(dists, axis=1)
-    W_closest = np.argmin(dists, axis=0)
+    Z_closest = np.argmin(dists_sqr, axis=1)
+    W_closest = np.argmin(dists_sqr, axis=0)
 
-    pairs = []
-    for i, _ in enumerate(Z):
-        j = Z_closest[i]
-        if W_closest[j] == i:
-            pairs.append((i, j))
-    return pairs
+    paired_z = np.nonzero(W_closest[Z_closest] == np.arange(N))[0]
+    paired_w = Z_closest[paired_z]
+    return paired_z, paired_w
 
-def get_deformation_error(Z, W, correspondence):
-    return sum(abs(Z[i] - W[j]) for i, j in correspondence) / len(correspondence)
+def get_deformation_error(Z, W, paired_z, paired_w):
+    return np.sum(np.abs(Z[paired_z] - W[paired_w])) / len(paired_z)
 
 def extract_correspondence(votes):
     correspondence = []
@@ -438,7 +422,7 @@ def extract_correspondence(votes):
         votes /= np.max(votes)
     N = votes.shape[0]
     EPS = 1e-5
-    THRESHOLD = 0
+    THRESHOLD = 0.35
     for _ in range(N):
         row, col = np.unravel_index(np.argmax(votes), votes.shape)
         confidence = votes[row, col]
@@ -469,25 +453,29 @@ def print_correspondence(meshes, correspondence):
     print(*(confidence for confidence, *_ in correspondence), sep='\n', end='\n\n')
     for i, mesh in enumerate(meshes):
         for _, *v in correspondence:
-            print(*mesh.vertices[v[i]])
+            print(*mesh.sample[v[i]])
         print('')
 
+def output_pointset(points, filename):
+    with open(filename, 'w') as f:
+        for point in points:
+            f.write('{:.2f} {:.2f} {:.2f}\n'.format(*point))
+
 def main():
-    file1 = 'cat0'
-    file2 = 'cat1'
+    filenames = ('cat0', 'cat1')
     meshes = []
-    for filename in (file1, file2):
-        if filename == file2: sys.exit(0)
+    for filename in filenames:
         mesh = read_mesh(f'./datasets/non-rigid-world/{filename}.obj')
         mesh.calculate_planar_embedding()
-        # mesh.display_embedding()
-        mesh.calculate_sample(30)
+        mesh.display_embedding()
+        continue
+        mesh.calculate_sample(50)
         meshes.append(mesh)
-        # for v in mesh.sample:
-        #     print(*mesh.vertices[v])
-        # print('')
+        output_pointset((mesh.vertices[i] for i in mesh.sample), f'./samples/{filename}')
+    return
     correspondence = mobius_voting(*meshes)
-    print_correspondence(meshes, correspondence)
+    for i, (mesh, filename) in enumerate(zip(meshes, filenames)):
+        output_pointset((mesh.vertices[mesh.sample[pair[i]]] for _, *pair in correspondence), f'./correspondences/{filename}')
 
 if __name__ == '__main__':
     main()

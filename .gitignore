@@ -1,1 +1,6 @@
 tags
+profiling
+__pycache__
+correspondences/+
+samples/+
+shortest
