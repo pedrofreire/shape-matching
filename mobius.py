@@ -293,7 +293,13 @@ class Mesh:
         self.find_curvatures()
         extrema = []
         for vertex in range(len(self.vertices)):
-            if self.curvature[vertex] > max(0, 2 * max(self.curvature[neighbor] for neighbor in self.neighbors[vertex])):
+            faces = self.vertex_faces[vertex]
+            boundary = False
+            for neighbor in self.neighbors[vertex]:
+                if(len( set(self.neighbors[neighbor]) & set(self.neighbors[vertex]) ) < 2):
+                    #print('iterating on boundary')
+                    boundary = True
+            if not boundary and self.curvature[vertex] > max(self.curvature[neighbor] for neighbor in self.neighbors[vertex]) + 0.02:
                 extrema.append(vertex)
         return extrema
 
@@ -305,9 +311,19 @@ class Mesh:
         sum_angles = 0
         for face_idx in self.vertex_faces[u]:
             face = self.faces[face_idx]
+            obtuse=sum(angle > np.pi/2 for angle in self.get_face_angles(face))
             v, w = set(face) - set([u])
+            a, b = self.get_angle(w, u, v), self.get_angle(v, w, u)
             sum_angles += self.get_angle(u, v, w)
-            area += self.face_area(face) / 3
+            if not obtuse:
+                sqr_dist = lambda p,q : np.sqrt(sum((px - qx)**2 for px, qx in zip(p, q)))
+                area += 1/8 * (sqr_dist(self.vertices[u],self.vertices[v]) / np.tan(a) + sqr_dist(self.vertices[u],self.vertices[w]) / np.tan(b))
+            else:                
+                if(self.get_angle(u, v, w) > np.pi/2):             
+                    area += self.face_area(face) / 2
+                else:
+                    area += self.face_area(face) / 4
+                
         return (2*np.pi - sum_angles) / area
 
     def face_area(self, face):
@@ -467,12 +483,12 @@ def main():
     for filename in filenames:
         mesh = read_mesh(f'./datasets/non-rigid-world/{filename}.obj')
         mesh.calculate_planar_embedding()
-        mesh.display_embedding()
-        continue
+        #mesh.display_embedding()
+        
         mesh.calculate_sample(50)
         meshes.append(mesh)
         output_pointset((mesh.vertices[i] for i in mesh.sample), f'./samples/{filename}')
-    return
+    #return
     correspondence = mobius_voting(*meshes)
     for i, (mesh, filename) in enumerate(zip(meshes, filenames)):
         output_pointset((mesh.vertices[mesh.sample[pair[i]]] for _, *pair in correspondence), f'./correspondences/{filename}')
