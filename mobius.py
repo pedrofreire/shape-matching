@@ -49,6 +49,7 @@ class Mesh:
         self.edge_to_me_vertex = {}
 
         self.me_neighbors = []
+        self.face_to_me_face = {}
 
         for face in self.faces:
             me_face = []
@@ -63,6 +64,8 @@ class Mesh:
             for u, v in zip(me_face, me_face[1:] + [me_face[0]]):
                 self.me_neighbors[u].append((v, 1))
                 self.me_neighbors[v].append((u, -1))
+
+            self.face_to_me_face[face] = me_face
 
         self.me_vertex_to_edge = {}
         for key, value in self.edge_to_me_vertex.items():
@@ -81,6 +84,7 @@ class Mesh:
     def calculate_planar_embedding(self):
         self.calculate_u()
         self.calculate_ul()
+
 
         self.embedding = [None for _ in self.me_vertices]
         for r in range(len(self.me_vertices)):
@@ -123,7 +127,8 @@ class Mesh:
 
 
         # TODO: implement better cut_face choice algorithm.
-        self.cut_face = self.faces[3000]
+        self.cut_face = self.faces[3]
+        self.me_cut_face = self.face_to_me_face[self.cut_face]
         x, y, z = self.cut_face
 
         # We will set u[cm1] = -1 and u[c1] = 1.
@@ -154,9 +159,9 @@ class Mesh:
                 continue
             i -= (i >= cm1) + (i >= c1)
             if j == cm1:
-                b[i] += val
+                b[i] -= (-1) * val
             elif j == c1:
-                b[i] -= val
+                b[i] -=  (1) * val
             else:
                 j -= (j >= cm1) + (j >= c1)
                 rows.append(i)
@@ -190,6 +195,8 @@ class Mesh:
         while frontier:
             node = frontier.pop()
             for neighbor, orientation in self.me_neighbors[node]:
+                if set([node, neighbor]).issubset(set(self.me_cut_face)):
+                    continue
                 if neighbor not in visited:
                     self.calculate_one_ul(node, neighbor, orientation)
                     visited.add(neighbor)
@@ -226,28 +233,27 @@ class Mesh:
         angles = []
         u, v, w = face
         angles.append(self.get_angle(w, u, v))
-        angles.append(self.get_angle(u, w, v))
+        angles.append(self.get_angle(u, v, w))
         angles.append(self.get_angle(v, w, u))
         return angles
 
     def get_angle(self, u, v, w):
         """ Returns angle between vectors uv and uw. """
-        norm = lambda p : np.sqrt(sum(x**2 for x in p))
         p = self.vertices[u]
         q = self.vertices[v]
         r = self.vertices[w]
         vq = Point(q.x - p.x, q.y - p.y, q.z - p.z)
         vr = Point(r.x - p.x, r.y - p.y, r.z - p.z)
-        return np.arccos(np.dot(vq, vr) / (norm(vq) * norm(vr)))
+        return np.arccos(np.dot(vq, vr) / (np.linalg.norm(vq) * np.linalg.norm(vr)))
 
     def calculate_sample(self, N):
+        self.dists = cy_short_paths.all_pairs_shortest_paths(self)
         self.sample = self.find_curvature_extrema()
-        print(len(self.sample))
         if len(self.sample) > N:
             self.sample = np.random.choice(self.sample, N, replace=False)
+            return
         self.sampleset = set(self.sample)
 
-        self.dists = cy_short_paths.all_pairs_shortest_paths(self)
         # self.dists = self.calculate_geodesic_distances()
         while len(self.sample) < N:
             farthest_point = self.get_farthest_point()
@@ -291,17 +297,14 @@ class Mesh:
 
     def find_curvature_extrema(self):
         self.find_curvatures()
-        extrema = []
-        for vertex in range(len(self.vertices)):
-            faces = self.vertex_faces[vertex]
-            boundary = False
-            for neighbor in self.neighbors[vertex]:
-                if(len( set(self.neighbors[neighbor]) & set(self.neighbors[vertex]) ) < 2):
-                    #print('iterating on boundary')
-                    boundary = True
-            if not boundary and self.curvature[vertex] > max(self.curvature[neighbor] for neighbor in self.neighbors[vertex]) + 0.02:
-                extrema.append(vertex)
-        return extrema
+        good_extrema = []
+        for node in range(len(self.vertices)):
+            is_boundary = any(len(set(self.neighbors[neighbor]) & set(self.neighbors[node])) < 2 for neighbor in self.neighbors[node])
+            is_extrema = self.curvature[node] > max(self.curvature[neighbor] for neighbor in self.neighbors[node]) + 0.02
+            is_far_enough = min((self.dists[node][extremum] for extremum in good_extrema), default=1e9) > 10
+            if not is_boundary and is_extrema and is_far_enough:
+                good_extrema.append(node)
+        return good_extrema
 
     def find_curvatures(self):
         self.curvature = [self.find_vertex_curvature(v) for v in range(len(self.vertices))]
@@ -369,7 +372,7 @@ def mobius_voting(M1, M2, num_it=None):
     N = len(Z0)
 
     if num_it is None:
-        num_it = 5*N**3
+        num_it = 10*N**3
     votes = np.zeros((N, N))
     for _ in range(num_it):
         Z_triplet = np.random.choice(Z0, 3, replace=False)
@@ -384,7 +387,7 @@ def mobius_voting(M1, M2, num_it=None):
         paired_z, paired_w = get_mutually_closest_pairs(Z, W)
 
         EPS = 1e-5
-        THRESHOLD = 0.2 * len(Z) 
+        THRESHOLD = 0.40 * len(Z) 
 
         if len(paired_z) <= THRESHOLD:
             continue
@@ -479,16 +482,19 @@ def output_pointset(points, filename):
 
 def main():
     filenames = ('cat0', 'cat1')
+
+
     meshes = []
     for filename in filenames:
         mesh = read_mesh(f'./datasets/non-rigid-world/{filename}.obj')
         mesh.calculate_planar_embedding()
-        #mesh.display_embedding()
+        mesh.display_embedding()
+        continue
         
         mesh.calculate_sample(50)
         meshes.append(mesh)
         output_pointset((mesh.vertices[i] for i in mesh.sample), f'./samples/{filename}')
-    #return
+    return
     correspondence = mobius_voting(*meshes)
     for i, (mesh, filename) in enumerate(zip(meshes, filenames)):
         output_pointset((mesh.vertices[mesh.sample[pair[i]]] for _, *pair in correspondence), f'./correspondences/{filename}')
