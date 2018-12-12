@@ -4,19 +4,21 @@ let scenewrapper;
 const base_folder = './datasets/non-rigid-world/'
 
 const file1 = 'cat0';
-const file2 = 'cat1';
+const file2 = 'cat2';
 
 function start() {
   scenewrapper = new SceneWrapper();
   const num_colors = 200;
   const colors = [...Array(num_colors)].map(_ => random_color());
 
-  load_object(base_folder + file1 + '.obj', new THREE.Vector3(-100, 0, 0));
-  load_object(base_folder + file2 + '.obj', new THREE.Vector3(100, 0, 0));
-  display_pointset('./correspondences/' + file1, new THREE.Vector3(-100, 0, 0), 3.0, colors);
-  display_pointset('./correspondences/' + file2, new THREE.Vector3( 100, 0, 0),  3.0, colors);
-  display_pointset('./samples/' + file1, new THREE.Vector3(-100, 0, 0), 2.0);
-  display_pointset('./samples/' + file2, new THREE.Vector3(100, 0, 0), 2.0);
+  const half_dist = 60.0;
+
+  load_object(base_folder + file1 + '.obj', new THREE.Vector3(-half_dist, 0, 0));
+  load_object(base_folder + file2 + '.obj', new THREE.Vector3(half_dist, 0, 0));
+  display_pointset('./correspondences/' + file1, new THREE.Vector3(-half_dist, 0, 0), 3.0, colors);
+  display_pointset('./correspondences/' + file2, new THREE.Vector3( half_dist, 0, 0),  3.0, colors);
+  display_pointset('./samples/' + file1, new THREE.Vector3(-half_dist, 0, 0), 2.0);
+  display_pointset('./samples/' + file2, new THREE.Vector3(half_dist, 0, 0), 2.0);
 }
 
 function random_color() {

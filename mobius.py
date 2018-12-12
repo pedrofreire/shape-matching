@@ -6,6 +6,7 @@ from scipy.sparse.linalg import spsolve, lsqr
 import heapq
 import sys
 from cy_shortest import cy_short_paths
+from shortest import voting, short_paths
 
 Point = namedtuple('Point', ['x', 'y', 'z'])
 
@@ -247,19 +248,20 @@ class Mesh:
         return np.arccos(np.dot(vq, vr) / (np.linalg.norm(vq) * np.linalg.norm(vr)))
 
     def calculate_sample(self, N):
-        self.dists = cy_short_paths.all_pairs_shortest_paths(self)
+        self.dists = self.fast_calculate_geodesic_distances()
         self.sample = self.find_curvature_extrema()
         if len(self.sample) > N:
             self.sample = np.random.choice(self.sample, N, replace=False)
-            return
         self.sampleset = set(self.sample)
 
-        # self.dists = self.calculate_geodesic_distances()
         while len(self.sample) < N:
             farthest_point = self.get_farthest_point()
             self.sample.append(farthest_point)
             self.sampleset.add(farthest_point)
         self.sample = np.array(self.sample)
+
+    def fast_calculate_geodesic_distances(self):
+        return short_paths.w_all_pairs_shortest_paths(self.neighbors, self.vertices)
 
     def calculate_geodesic_distances(self):
         n = len(self.vertices)
@@ -297,14 +299,27 @@ class Mesh:
 
     def find_curvature_extrema(self):
         self.find_curvatures()
-        good_extrema = []
+        good_extrema = set()
         for node in range(len(self.vertices)):
             is_boundary = any(len(set(self.neighbors[neighbor]) & set(self.neighbors[node])) < 2 for neighbor in self.neighbors[node])
-            is_extrema = self.curvature[node] > max(self.curvature[neighbor] for neighbor in self.neighbors[node]) + 0.02
-            is_far_enough = min((self.dists[node][extremum] for extremum in good_extrema), default=1e9) > 10
-            if not is_boundary and is_extrema and is_far_enough:
-                good_extrema.append(node)
-        return good_extrema
+            is_extrema = self.curvature[node] > max(self.curvature[neighbor] for neighbor in self.neighbors[node]) + 1
+
+            # We remove an extremum if we find a better extremum in its region.
+            is_near_better_extrema = False
+            to_remove = []
+            for extremum in good_extrema:
+                is_close = self.dists[node][extremum] < 10
+                if is_close: 
+                    if self.curvature[node] > self.curvature[extremum]:
+                        to_remove.append(extremum)
+                    else:
+                        is_near_better_extrema = True
+                        break
+
+            if not is_boundary and is_extrema and not is_near_better_extrema:
+                good_extrema -= set(to_remove)
+                good_extrema.add(node)
+        return list(good_extrema)
 
     def find_curvatures(self):
         self.curvature = [self.find_vertex_curvature(v) for v in range(len(self.vertices))]
@@ -312,15 +327,16 @@ class Mesh:
     def find_vertex_curvature(self, u):
         area = 0
         sum_angles = 0
+        sqr_dist = lambda p,q : np.sqrt(sum((px - qx)**2 for px, qx in zip(p, q)))
         for face_idx in self.vertex_faces[u]:
             face = self.faces[face_idx]
-            obtuse=sum(angle > np.pi/2 for angle in self.get_face_angles(face))
             v, w = set(face) - set([u])
-            a, b = self.get_angle(w, u, v), self.get_angle(v, w, u)
             sum_angles += self.get_angle(u, v, w)
+
+            obtuse=any(angle > np.pi/2 for angle in self.get_face_angles(face))
             if not obtuse:
-                sqr_dist = lambda p,q : np.sqrt(sum((px - qx)**2 for px, qx in zip(p, q)))
-                area += 1/8 * (sqr_dist(self.vertices[u],self.vertices[v]) / np.tan(a) + sqr_dist(self.vertices[u],self.vertices[w]) / np.tan(b))
+                a, b = self.get_angle(w, u, v), self.get_angle(v, w, u)
+                area += 1/8 * (self.get_edge_dist((u, v)) / np.tan(a) + self.get_edge_dist((u, w)) / np.tan(b))
             else:                
                 if(self.get_angle(u, v, w) > np.pi/2):             
                     area += self.face_area(face) / 2
@@ -365,11 +381,21 @@ class Mesh:
         x, y = self.embedding[me_point]
         return x + 1j*y
     
+def fast_mobius_voting(M1, M2, num_it=None):
+    Z0 = M1.project(M1.sample)
+    W0 = M2.project(M2.sample)
+
+    votes = np.array(voting.mobius_voting(Z0, W0, 10, 0.4))
+    correspondence = extract_correspondence(votes)
+    return correspondence
 
 def mobius_voting(M1, M2, num_it=None):
     Z0 = M1.project(M1.sample)
     W0 = M2.project(M2.sample)
     N = len(Z0)
+
+    EPS = 1e-8
+    THRESHOLD = 0.50 * len(Z0) 
 
     if num_it is None:
         num_it = 10*N**3
@@ -386,9 +412,6 @@ def mobius_voting(M1, M2, num_it=None):
 
         paired_z, paired_w = get_mutually_closest_pairs(Z, W)
 
-        EPS = 1e-5
-        THRESHOLD = 0.40 * len(Z) 
-
         if len(paired_z) <= THRESHOLD:
             continue
 
@@ -397,6 +420,7 @@ def mobius_voting(M1, M2, num_it=None):
 
     correspondence = extract_correspondence(votes)
     return correspondence
+
 
 def get_mobius_transform(Z):
     # Hardcode matrix to speed computation.
@@ -440,7 +464,6 @@ def extract_correspondence(votes):
     if np.max(votes) > 0:
         votes /= np.max(votes)
     N = votes.shape[0]
-    EPS = 1e-5
     THRESHOLD = 0.35
     for _ in range(N):
         row, col = np.unravel_index(np.argmax(votes), votes.shape)
@@ -481,21 +504,19 @@ def output_pointset(points, filename):
             f.write('{:.2f} {:.2f} {:.2f}\n'.format(*point))
 
 def main():
-    filenames = ('cat0', 'cat1')
+    filenames = ('cat0', 'cat2')
 
 
     meshes = []
     for filename in filenames:
         mesh = read_mesh(f'./datasets/non-rigid-world/{filename}.obj')
         mesh.calculate_planar_embedding()
-        mesh.display_embedding()
-        continue
+        # mesh.display_embedding()
         
-        mesh.calculate_sample(50)
+        mesh.calculate_sample(70)
         meshes.append(mesh)
         output_pointset((mesh.vertices[i] for i in mesh.sample), f'./samples/{filename}')
-    return
-    correspondence = mobius_voting(*meshes)
+    correspondence = fast_mobius_voting(*meshes)
     for i, (mesh, filename) in enumerate(zip(meshes, filenames)):
         output_pointset((mesh.vertices[mesh.sample[pair[i]]] for _, *pair in correspondence), f'./correspondences/{filename}')
 
