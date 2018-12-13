@@ -620,20 +620,22 @@ def run_experiments():
         for line in f.readlines():
             filenames.append(line.strip())
 
+    MIN_N = 30
+    MAX_N = 100
     filenames = filenames[:3]
     meshes = []
     for i, filename in enumerate(filenames):
         mesh = read_mesh(f'{OBJS_FOLDER}/{filename}.obj')
         meshes.append(mesh)
         mesh.calculate_planar_embedding()
-        mesh.calculate_sample(40)
+        mesh.calculate_sample(MAX_N)
 
     full_samples = [mesh.sample for mesh in meshes]
     num_runs = 5
     for _ in range(num_runs):
         i = random.randrange(len(filenames))
         j = random.randrange(len(filenames))
-        N = random.randrange(30, 40+1)
+        N = random.randrange(MIN_N, MAX_N+1)
         first_mesh = meshes[i]
         first_name = filenames[i]
         second_mesh = meshes[j]
