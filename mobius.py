@@ -622,7 +622,7 @@ def run_experiments():
 
     MIN_N = 30
     MAX_N = 100
-    filenames = filenames[:3]
+
     meshes = []
     for i, filename in enumerate(filenames):
         mesh = read_mesh(f'{OBJS_FOLDER}/{filename}.obj')
@@ -631,7 +631,7 @@ def run_experiments():
         mesh.calculate_sample(MAX_N)
 
     full_samples = [mesh.sample for mesh in meshes]
-    num_runs = 5
+    num_runs = 300
     for _ in range(num_runs):
         i = random.randrange(len(filenames))
         j = random.randrange(len(filenames))
