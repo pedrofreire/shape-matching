@@ -616,7 +616,7 @@ def run_group(filenames):
 
 def run_experiments():
     filenames = []
-    with open('datasets/good_models.txt') as f:
+    with open('datasets/test_models.txt') as f:
         for line in f.readlines():
             filenames.append(line.strip())
 
