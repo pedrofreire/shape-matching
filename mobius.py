@@ -616,7 +616,7 @@ def run_group(filenames):
 
 def run_experiments():
     filenames = []
-    with open('possible_models') as f:
+    with open('datasets/good_models.txt') as f:
         for line in f.readlines():
             filenames.append(line.strip())
 
@@ -653,6 +653,7 @@ def main():
     # files = ['cat0', 'cat1', 'cat10', 'cat2'] #, 'cat3', 'cat4', 'cat5', 'cat7', 'cat8']
 
     run_experiments()
+    return
 
     filenames = [
         'victoria10',
