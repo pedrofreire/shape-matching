@@ -1,8 +1,8 @@
 
 let scenewrapper;
 
-const base_folder = 'outputs/all_runs/40';
-// const base_folder = 'outputs/last';
+// const base_folder = 'outputs/all_runs/40';
+const base_folder = 'outputs/last';
 
 function start() {
   scenewrapper = new SceneWrapper();
