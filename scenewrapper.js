@@ -14,9 +14,9 @@ class SceneWrapper {
 		const nearClippingDist = 1;
 		const farClippingDist = 2000;
 		this.camera = new THREE.PerspectiveCamera(angle, ratio, nearClippingDist, farClippingDist);
-		this.camera.position.x = 100;
-		this.camera.position.y = -200;
-		this.camera.position.z = 150;
+		this.camera.position.x = 0;
+		this.camera.position.y = -400;
+		this.camera.position.z = 100;
 		this.camera.lookAt(new THREE.Vector3(0,0,0));
 	}
 
@@ -28,7 +28,17 @@ class SceneWrapper {
 
 	initScene() {
 		this.scene = new THREE.Scene();
-		this.orbitControls = new THREE.OrbitControls(this.camera);
+
+		this.controls = new THREE.TrackballControls(this.camera);
+    this.controls.rotateSpeed = 1.0;
+    this.controls.zoomSpeed = 1.2;
+    this.controls.panSpeed = 0.8;
+    this.controls.noZoom = false;
+    this.controls.noPan = false;
+    this.controls.staticMoving = true;
+    this.controls.dynamicDampingFactor = 0.3;
+    this.controls.addEventListener( 'change', () => { this.render(); } );
+
 		this.initLight();
 	}
 
@@ -73,6 +83,7 @@ class SceneWrapper {
 	animate(timeEllapsed) {
 		requestAnimationFrame(this.animate.bind(this));
 		// Input.handle();
+		this.controls.update();
 		for(let animation of this.animations)
 			animation(timeEllapsed);
 		this.render();

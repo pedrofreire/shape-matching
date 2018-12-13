@@ -1,10 +1,15 @@
 from collections import defaultdict, namedtuple, deque
+import datetime
+import heapq
+import re
+import sys
+import os
+
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.sparse import csc_matrix
 from scipy.sparse.linalg import spsolve, lsqr
-import heapq
-import sys
+
 from cy_shortest import cy_short_paths
 from shortest import voting, short_paths
 
@@ -127,8 +132,9 @@ class Mesh:
         A_dict = defaultdict(float)
 
 
-        # TODO: implement better cut_face choice algorithm.
-        self.cut_face = self.faces[3]
+        # The choice of cut face should not impact the result,
+        # so we just pick the first face.
+        self.cut_face = self.faces[0]
         self.me_cut_face = self.face_to_me_face[self.cut_face]
         x, y, z = self.cut_face
 
@@ -380,12 +386,18 @@ class Mesh:
         me_point = self.edge_to_me_vertex[edge]
         x, y = self.embedding[me_point]
         return x + 1j*y
+
+    def total_area(self):
+        return sum(self.face_area(face) for face in self.faces)
     
+ITER_CONST = 10
+MUTUAL_PAIRS_THRESHOLD = 0.4
+
 def fast_mobius_voting(M1, M2, num_it=None):
     Z0 = M1.project(M1.sample)
     W0 = M2.project(M2.sample)
 
-    votes = np.array(voting.mobius_voting(Z0, W0, 10, 0.4))
+    votes = np.array(voting.mobius_voting(Z0, W0, ITER_CONST, MUTUAL_PAIRS_THRESHOLD))
     correspondence = extract_correspondence(votes)
     return correspondence
 
@@ -395,7 +407,7 @@ def mobius_voting(M1, M2, num_it=None):
     N = len(Z0)
 
     EPS = 1e-8
-    THRESHOLD = 0.50 * len(Z0) 
+    THRESHOLD = 0.40 * len(Z0) 
 
     if num_it is None:
         num_it = 10*N**3
@@ -449,8 +461,8 @@ def get_mutually_closest_pairs(Z, W):
     diffs = Z - W.reshape(-1, 1)
     dists_sqr = diffs.real**2 + diffs.imag**2
     
-    Z_closest = np.argmin(dists_sqr, axis=1)
-    W_closest = np.argmin(dists_sqr, axis=0)
+    Z_closest = np.argmin(dists_sqr, axis=0)
+    W_closest = np.argmin(dists_sqr, axis=1)
 
     paired_z = np.nonzero(W_closest[Z_closest] == np.arange(N))[0]
     paired_w = Z_closest[paired_z]
@@ -464,7 +476,7 @@ def extract_correspondence(votes):
     if np.max(votes) > 0:
         votes /= np.max(votes)
     N = votes.shape[0]
-    THRESHOLD = 0.35
+    THRESHOLD = 0 # 0.35
     for _ in range(N):
         row, col = np.unravel_index(np.argmax(votes), votes.shape)
         confidence = votes[row, col]
@@ -503,22 +515,117 @@ def output_pointset(points, filename):
         for point in points:
             f.write('{:.2f} {:.2f} {:.2f}\n'.format(*point))
 
-def main():
-    filenames = ('cat0', 'cat2')
+def evaluate(meshes, filenames, correspondence):
+    Z_truth = read_groundtruth(filenames[0])
+    W_truth = read_groundtruth(filenames[1])
+
+    Z_pts = np.array([meshes[0].vertices[meshes[0].sample[i]] for _, i, _ in correspondence])
+    W_pts = np.array([meshes[1].vertices[meshes[1].sample[j]] for _, _, j in correspondence])
+
+    dists = np.array([[np.linalg.norm(pt - pt_truth) for pt in Z_pts] for pt_truth in Z_truth])
+    
+    Z_idxs = np.argmin(dists, axis=0)
+
+    
+    diffs = W_truth[Z_idxs] - W_pts
+    dists = np.linalg.norm(diffs, axis=1)
+    err = np.sum(dists) / (np.sqrt(meshes[0].total_area()) * len(correspondence))
+    return err
 
 
+OBJS_FOLDER = 'datasets/non-rigid-world'
+GROUNDTRUTH_FOLDER = 'datasets/tosca'
+
+def read_groundtruth(filename):
+    points = []
+    with open(f'{GROUNDTRUTH_FOLDER}/{filename}.obj') as f:
+        for line in f.readlines():
+            tag, *nums = line.split() 
+            if tag == 'v':
+                points.append(list(map(float, nums)))
+    return np.array(points)
+
+def symlink_force(target, link_name):
+    os.symlink(target, 'tmp')
+    os.rename('tmp', link_name)
+
+def get_timestamp():
+    return re.sub(r'[: \.]', '-', str(datetime.datetime.now()))
+
+def output_error(output_folder, err, corresp_size):
+    with open(f'{output_folder}/eval', 'w') as f:
+        f.write(f'{err}\n')
+        f.write(f'{corresp_size}\n')
+
+def log_execution(meshes, filenames, correspondence, err):
+    inter_folder = f'{filenames[0]}_{filenames[1]}_{get_timestamp()}'
+    output_folder = f'outputs/{inter_folder}'
+    os.makedirs(output_folder, exist_ok=True)
+
+    for i, (mesh, filename) in enumerate(zip(meshes, filenames)):
+        symlink_force(f'../../{OBJS_FOLDER}/{filename}.obj', f'{output_folder}/mesh{i}.obj')
+        output_pointset((mesh.vertices[i] for i in mesh.sample), f'{output_folder}/sample{i}')
+        output_pointset((mesh.vertices[mesh.sample[pair[i]]] for _, *pair in correspondence), f'{output_folder}/correspondence{i}')
+
+    output_error(output_folder, err, len(correspondence))
+    symlink_force(inter_folder, 'outputs/last')
+
+    num_saved_runs = len(os.listdir('outputs/all_runs'))
+    symlink_force(f'../{inter_folder}', f'outputs/all_runs/{num_saved_runs}')
+
+def run_pair(filenames):
+    
     meshes = []
-    for filename in filenames:
-        mesh = read_mesh(f'./datasets/non-rigid-world/{filename}.obj')
+    for i, filename in enumerate(filenames):
+        mesh = read_mesh(f'{OBJS_FOLDER}/{filename}.obj')
+        meshes.append(mesh)
+
         mesh.calculate_planar_embedding()
         # mesh.display_embedding()
-        
-        mesh.calculate_sample(70)
-        meshes.append(mesh)
-        output_pointset((mesh.vertices[i] for i in mesh.sample), f'./samples/{filename}')
+        mesh.calculate_sample(60)
+
     correspondence = fast_mobius_voting(*meshes)
-    for i, (mesh, filename) in enumerate(zip(meshes, filenames)):
-        output_pointset((mesh.vertices[mesh.sample[pair[i]]] for _, *pair in correspondence), f'./correspondences/{filename}')
+    err = evaluate(meshes, filenames, correspondence)
+    log_execution(meshes, filenames, correspondence, err)
+
+def run_group(filenames):
+    N = len(filenames)
+    errors = [[None for _ in range(N)] for _ in range(N)]
+    meshes = []
+    for i, filename in enumerate(filenames):
+        mesh = read_mesh(f'{OBJS_FOLDER}/{filename}.obj')
+        meshes.append(mesh)
+        mesh.calculate_planar_embedding()
+        mesh.calculate_sample(60)
+
+    for i, (first_mesh, first_name) in enumerate(zip(meshes, filenames)):
+        for j, (second_mesh, second_name) in enumerate(zip(meshes, filenames)):
+            if j < i:
+                continue
+
+            correspondence = fast_mobius_voting(first_mesh, second_mesh)
+            err = evaluate([first_mesh, second_mesh], [first_name, second_name], correspondence)
+            errors[i][j] = err
+            errors[j][i] = err
+
+            log_execution([first_mesh, second_mesh], [first_name, second_name], correspondence, err)
+
+    print(errors)
+
+
+def main():
+    # files = ['cat0', 'cat1', 'cat10', 'cat2'] #, 'cat3', 'cat4', 'cat5', 'cat7', 'cat8']
+    filenames = [
+        'victoria10',
+        'victoria12',
+        'victoria17',
+        'victoria2',
+    ]
+    run_group(filenames)
+    return
+    filenames = ('horse0', 'horse14')
+    run_pair(filenames)
+
 
 if __name__ == '__main__':
     main()

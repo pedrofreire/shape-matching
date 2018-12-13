@@ -1,3 +1,3 @@
 import cProfile
 import mobius
-print(cProfile.run('mobius.main()'))
+cProfile.run('mobius.main()')

@@ -1,24 +1,22 @@
 
 let scenewrapper;
 
-const base_folder = './datasets/non-rigid-world/'
-
-const file1 = 'cat0';
-const file2 = 'cat2';
+const base_folder = 'outputs/last';
 
 function start() {
   scenewrapper = new SceneWrapper();
+  scenewrapper.renderer.setClearColor( 0xFFFFFF, 1);
   const num_colors = 200;
   const colors = [...Array(num_colors)].map(_ => random_color());
 
   const half_dist = 60.0;
 
-  load_object(base_folder + file1 + '.obj', new THREE.Vector3(-half_dist, 0, 0));
-  load_object(base_folder + file2 + '.obj', new THREE.Vector3(half_dist, 0, 0));
-  display_pointset('./correspondences/' + file1, new THREE.Vector3(-half_dist, 0, 0), 3.0, colors);
-  display_pointset('./correspondences/' + file2, new THREE.Vector3( half_dist, 0, 0),  3.0, colors);
-  display_pointset('./samples/' + file1, new THREE.Vector3(-half_dist, 0, 0), 2.0);
-  display_pointset('./samples/' + file2, new THREE.Vector3(half_dist, 0, 0), 2.0);
+  load_object(base_folder + '/mesh0.obj', new THREE.Vector3(-half_dist, 0, 0));
+  load_object(base_folder + '/mesh1.obj', new THREE.Vector3(half_dist, 0, 0));
+  display_pointset(base_folder + '/correspondence0', new THREE.Vector3(-half_dist, 0, 0), 3.0, colors);
+  display_pointset(base_folder + '/correspondence1', new THREE.Vector3( half_dist, 0, 0),  3.0, colors);
+  display_pointset(base_folder + '/sample0', new THREE.Vector3(-half_dist, 0, 0), 2.0);
+  display_pointset(base_folder + '/sample1', new THREE.Vector3(half_dist, 0, 0), 2.0);
 }
 
 function random_color() {
@@ -30,6 +28,7 @@ function load_object(obj_file, pos) {
   loader.load(obj_file, (obj) => { 
     if(pos != null)
       obj.position.set(pos.x, pos.y, pos.z);
+    obj.children[0].material.color.setHex(0x222222);
     scenewrapper.scene.add(obj); 
   });
 }
