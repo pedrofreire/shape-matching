@@ -1,6 +1,7 @@
 from collections import defaultdict, namedtuple, deque
 import datetime
 import heapq
+import random
 import re
 import sys
 import os
@@ -10,7 +11,6 @@ import matplotlib.pyplot as plt
 from scipy.sparse import csc_matrix
 from scipy.sparse.linalg import spsolve, lsqr
 
-from cy_shortest import cy_short_paths
 from shortest import voting, short_paths
 
 Point = namedtuple('Point', ['x', 'y', 'z'])
@@ -33,10 +33,10 @@ class Mesh:
         self.cut_face = None
         self.embedding = None
 
-        self._calculate_neighbors()
-        self._calculate_edge_mesh()
+        self.calculate_neighbors()
+        self.calculate_edge_mesh()
 
-    def _calculate_neighbors(self):
+    def calculate_neighbors(self):
         self.neighbors = [[] for _ in self.vertices]
         for face in self.faces:
             for u, v in zip(face, face[1:] + face[:1]):
@@ -48,7 +48,7 @@ class Mesh:
             for v in face:
                 self.vertex_faces[v].append(face_idx)
 
-    def _calculate_edge_mesh(self):
+    def calculate_edge_mesh(self):
         self.me_vertices = []
         self.me_faces = []
 
@@ -573,7 +573,7 @@ def log_execution(meshes, filenames, correspondence, err):
     num_saved_runs = len(os.listdir('outputs/all_runs'))
     symlink_force(f'../{inter_folder}', f'outputs/all_runs/{num_saved_runs}')
 
-def run_pair(filenames):
+def run_pair(filenames, evaluate=True):
     
     meshes = []
     for i, filename in enumerate(filenames):
@@ -596,7 +596,7 @@ def run_group(filenames):
         mesh = read_mesh(f'{OBJS_FOLDER}/{filename}.obj')
         meshes.append(mesh)
         mesh.calculate_planar_embedding()
-        mesh.calculate_sample(60)
+        mesh.calculate_sample(40)
 
     for i, (first_mesh, first_name) in enumerate(zip(meshes, filenames)):
         for j, (second_mesh, second_name) in enumerate(zip(meshes, filenames)):
@@ -604,23 +604,79 @@ def run_group(filenames):
                 continue
 
             correspondence = fast_mobius_voting(first_mesh, second_mesh)
-            err = evaluate([first_mesh, second_mesh], [first_name, second_name], correspondence)
+            # err = evaluate([first_mesh, second_mesh], [first_name, second_name], correspondence)
+            err = 100
             errors[i][j] = err
             errors[j][i] = err
 
             log_execution([first_mesh, second_mesh], [first_name, second_name], correspondence, err)
 
-    print(errors)
+    # print(*errors, sep='\n')
 
+
+def run_experiments():
+    filenames = []
+    with open('possible_models') as f:
+        for line in f.readlines():
+            filenames.append(line.strip())
+
+    filenames = filenames[:3]
+    meshes = []
+    for i, filename in enumerate(filenames):
+        mesh = read_mesh(f'{OBJS_FOLDER}/{filename}.obj')
+        meshes.append(mesh)
+        mesh.calculate_planar_embedding()
+        mesh.calculate_sample(40)
+
+    full_samples = [mesh.sample for mesh in meshes]
+    num_runs = 5
+    for _ in range(num_runs):
+        i = random.randrange(len(filenames))
+        j = random.randrange(len(filenames))
+        N = random.randrange(30, 40+1)
+        first_mesh = meshes[i]
+        first_name = filenames[i]
+        second_mesh = meshes[j]
+        second_name = filenames[j]
+
+        first_mesh.sample = full_samples[i][:N]
+        second_mesh.sample = full_samples[j][:N]
+
+        correspondence = fast_mobius_voting(first_mesh, second_mesh)
+        if first_name[:3] == second_name[:3]:
+            err = evaluate([first_mesh, second_mesh], [first_name, second_name], correspondence)
+        else:
+            err = 100000.0
+        log_execution([first_mesh, second_mesh], [first_name, second_name], correspondence, err)
 
 def main():
     # files = ['cat0', 'cat1', 'cat10', 'cat2'] #, 'cat3', 'cat4', 'cat5', 'cat7', 'cat8']
+
+    run_experiments()
+
     filenames = [
         'victoria10',
         'victoria12',
         'victoria17',
         'victoria2',
     ]
+
+    filenames = [
+        'dog0',
+        'dog1',
+        'horse0',
+        'wolf0',
+    ]
+
+    filenames = [
+        'david0',
+        'david1',
+        'david10',
+        'michael1',
+        'michael10',
+        'michael11',
+            ]
+
     run_group(filenames)
     return
     filenames = ('horse0', 'horse14')

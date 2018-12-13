@@ -1,7 +1,8 @@
 
 let scenewrapper;
 
-const base_folder = 'outputs/last';
+const base_folder = 'outputs/all_runs/40';
+// const base_folder = 'outputs/last';
 
 function start() {
   scenewrapper = new SceneWrapper();
@@ -28,7 +29,7 @@ function load_object(obj_file, pos) {
   loader.load(obj_file, (obj) => { 
     if(pos != null)
       obj.position.set(pos.x, pos.y, pos.z);
-    obj.children[0].material.color.setHex(0x222222);
+    obj.children[0].material.color.setHex(0xbbbbbb);
     scenewrapper.scene.add(obj); 
   });
 }
