@@ -1,8 +1,26 @@
+<head>
+	<style>
+		body {
+			background: gray;
+			margin: 0px;
+			overflow: hidden;
+		}
+	</style>
+
+    <script src='./lib/three/build/three.js'></script>
+    <script src='./lib/three/examples/js/loaders/OBJLoader.js'></script>
+    <script src='./lib/three/examples/js/controls/TrackballControls.js'></script>
+    <script src='./scenewrapper.js'></script>
+</head>
+
+<body>
+<script> 
 
 let scenewrapper;
 
-const base_folder = 'outputs/all_runs/185';
+// const base_folder = 'outputs/all_runs/162';
 // const base_folder = 'outputs/last';
+const run_id = "<%= RUN_ID %>";
 
 function start() {
   scenewrapper = new SceneWrapper();
@@ -11,6 +29,12 @@ function start() {
   const colors = [...Array(num_colors)].map(_ => random_color());
 
   const half_dist = 60.0;
+
+  if(run_id != '') {
+    base_folder = 'outputs/all_runs/' + run_id;
+  } else {
+    base_folder = 'outputs/last';
+  }
 
   load_object(base_folder + '/mesh0.obj', new THREE.Vector3(-half_dist, 0, 0));
   load_object(base_folder + '/mesh1.obj', new THREE.Vector3(half_dist, 0, 0));
@@ -71,3 +95,18 @@ function add_sphere(nums, radius, color) {
 window.onload = function () {
   start();
 }
+
+document.onkeydown = (event) => {
+    const key_jumps = {
+        'ArrowLeft'  : -1, 
+        'ArrowRight' :  1, 
+        'ArrowUp'    : -10, 
+        'ArrowDown'  :  10, 
+        };
+    if(key_jumps != '' && event.key in key_jumps) {
+        window.location.href = '/?run_id=' + (parseInt(run_id)+key_jumps[event.key]);
+    } 
+};
+
+</script>
+</body>

@@ -102,10 +102,9 @@ class Mesh:
         # self.display_embedding()
 
     def display_embedding(self):
-        LENGTH_THRESHOLD = 30000
         fig, ax = plt.subplots()
         for me_face in self.me_faces[:]:
-            if self.is_cut_me_face(me_face) or self.embedded_triangle_length(me_face) > LENGTH_THRESHOLD:
+            if self.is_cut_me_face(me_face):
                 continue
             x, y = zip(*(self.embedding[vr] for vr in me_face+[me_face[0]]))
             ax.plot(x, y, '-')
@@ -516,6 +515,9 @@ def output_pointset(points, filename):
             f.write('{:.2f} {:.2f} {:.2f}\n'.format(*point))
 
 def evaluate(meshes, filenames, correspondence):
+    if filenames[0][:3] != filenames[1][:3]:
+        return 1e6
+
     Z_truth = read_groundtruth(filenames[0])
     W_truth = read_groundtruth(filenames[1])
 
@@ -573,7 +575,7 @@ def log_execution(meshes, filenames, correspondence, err):
     num_saved_runs = len(os.listdir('outputs/all_runs'))
     symlink_force(f'../{inter_folder}', f'outputs/all_runs/{num_saved_runs}')
 
-def run_pair(filenames, evaluate=True):
+def run_pair(filenames, sample_size=40):
     
     meshes = []
     for i, filename in enumerate(filenames):
@@ -582,13 +584,13 @@ def run_pair(filenames, evaluate=True):
 
         mesh.calculate_planar_embedding()
         # mesh.display_embedding()
-        mesh.calculate_sample(60)
+        mesh.calculate_sample(sample_size)
 
     correspondence = fast_mobius_voting(*meshes)
     err = evaluate(meshes, filenames, correspondence)
     log_execution(meshes, filenames, correspondence, err)
 
-def run_group(filenames):
+def run_group(filenames, sample_size=40):
     N = len(filenames)
     errors = [[None for _ in range(N)] for _ in range(N)]
     meshes = []
@@ -596,7 +598,7 @@ def run_group(filenames):
         mesh = read_mesh(f'{OBJS_FOLDER}/{filename}.obj')
         meshes.append(mesh)
         mesh.calculate_planar_embedding()
-        mesh.calculate_sample(40)
+        mesh.calculate_sample(sample_size)
 
     for i, (first_mesh, first_name) in enumerate(zip(meshes, filenames)):
         for j, (second_mesh, second_name) in enumerate(zip(meshes, filenames)):
@@ -604,14 +606,13 @@ def run_group(filenames):
                 continue
 
             correspondence = fast_mobius_voting(first_mesh, second_mesh)
-            # err = evaluate([first_mesh, second_mesh], [first_name, second_name], correspondence)
-            err = 100
+            err = evaluate([first_mesh, second_mesh], [first_name, second_name], correspondence)
             errors[i][j] = err
             errors[j][i] = err
 
             log_execution([first_mesh, second_mesh], [first_name, second_name], correspondence, err)
 
-    # print(*errors, sep='\n')
+    print(*errors, sep='\n')
 
 
 def run_experiments():
@@ -621,67 +622,19 @@ def run_experiments():
             filenames.append(line.strip())
 
     MIN_N = 30
-    MAX_N = 100
+    MAX_N = 50
 
-    meshes = []
-    for i, filename in enumerate(filenames):
-        mesh = read_mesh(f'{OBJS_FOLDER}/{filename}.obj')
-        meshes.append(mesh)
-        mesh.calculate_planar_embedding()
-        mesh.calculate_sample(MAX_N)
-
-    full_samples = [mesh.sample for mesh in meshes]
-    num_runs = 300
+    num_runs = 20
     for _ in range(num_runs):
-        i = random.randrange(len(filenames))
-        j = random.randrange(len(filenames))
+        while True:
+            i = random.randrange(len(filenames))
+            j = random.randrange(len(filenames))
+            if filenames[i][:3] == filenames[j][:3]:
+                break
         N = random.randrange(MIN_N, MAX_N+1)
-        first_mesh = meshes[i]
-        first_name = filenames[i]
-        second_mesh = meshes[j]
-        second_name = filenames[j]
-
-        first_mesh.sample = full_samples[i][:N]
-        second_mesh.sample = full_samples[j][:N]
-
-        correspondence = fast_mobius_voting(first_mesh, second_mesh)
-        if first_name[:3] == second_name[:3]:
-            err = evaluate([first_mesh, second_mesh], [first_name, second_name], correspondence)
-        else:
-            err = 100000.0
-        log_execution([first_mesh, second_mesh], [first_name, second_name], correspondence, err)
+        run_pair([filenames[i], filenames[j]], N)
 
 def main():
-    # files = ['cat0', 'cat1', 'cat10', 'cat2'] #, 'cat3', 'cat4', 'cat5', 'cat7', 'cat8']
-
-    run_experiments()
-    return
-
-    filenames = [
-        'victoria10',
-        'victoria12',
-        'victoria17',
-        'victoria2',
-    ]
-
-    filenames = [
-        'dog0',
-        'dog1',
-        'horse0',
-        'wolf0',
-    ]
-
-    filenames = [
-        'david0',
-        'david1',
-        'david10',
-        'michael1',
-        'michael10',
-        'michael11',
-            ]
-
-    run_group(filenames)
-    return
     filenames = ('horse0', 'horse14')
     run_pair(filenames)
 

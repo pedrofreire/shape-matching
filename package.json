@@ -1,0 +1,18 @@
+{
+  "name": "shape-matching",
+  "version": "1.0.0",
+  "description": "To run the visualization, run a server in this folder (e.g. \"python3 -m http.server\") and open the index.html page (e.g. with http://localhost:8000).",
+  "main": "server.js",
+  "directories": {
+    "lib": "lib"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "ejs": "^2.6.1",
+    "express": "^4.16.4"
+  }
+}
